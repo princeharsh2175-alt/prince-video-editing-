@@ -1,3 +1,4 @@
+
 import os
 import asyncio
 import shutil
@@ -17,6 +18,9 @@ UPLOADS = DATA / "uploads"
 EXPORTS = DATA / "exports"
 TEMP = DATA / "temp"
 
+ALLOWED_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
+VOICE = "hi-IN-SwaraNeural"
+
 for folder in (UPLOADS, EXPORTS, TEMP):
     folder.mkdir(parents=True, exist_ok=True)
 
@@ -26,7 +30,7 @@ HTML = r"""
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Lyrics Studio PRO</title>
+<title>Prince Studio</title>
 <style>
 :root {
  --bg:#0b1020;--panel:#141d32;--line:#2e3d59;
@@ -65,7 +69,7 @@ td input,td textarea{min-width:70px}
 </head>
 <body>
 <header>
- <h1>▶ Lyrics Studio PRO</h1>
+ <h1>▶ Prince Studio</h1>
  <p>Video Editor · Hindi Lyrics · Female AI Voice · Timed Captions · MP4 Export</p>
 </header>
 
@@ -102,11 +106,12 @@ td input,td textarea{min-width:70px}
  <select id="voice">
   <option value="hi-IN-SwaraNeural">Swara — Hindi Female</option>
  </select>
+
  <label for="rate">बोलने की गति</label>
  <input id="rate" type="range" min="0.7" max="1.3" step="0.1" value="1">
  <p id="rateLabel">1.0x</p>
  <button class="primary" id="testVoice">🔊 ब्राउज़र आवाज़ टेस्ट</button>
- <p class="small">ब्राउज़र टेस्ट में Chrome की उपलब्ध हिंदी आवाज़ इस्तेमाल होगी। MP4 में ऑनलाइन AI महिला आवाज़ बनेगी। इंटरनेट जरूरी है; सामान्यतः API Key नहीं चाहिए।</p>
+ <p class="small">ब्राउज़र टेस्ट में Chrome की उपलब्ध हिंदी आवाज़ इस्तेमाल होगी। MP4 में ऑनलाइन AI महिला आवाज़ बनेगी। इंटरनेट जरूरी है।</p>
 
  <h2 style="margin-top:22px">04. 🎞️ Export Settings</h2>
  <label class="check"><input type="checkbox" id="keepOriginal" checked> मूल वीडियो की आवाज़ भी रखें</label>
@@ -133,6 +138,10 @@ $("rate").oninput = () => {
 $("videoFile").onchange = async e => {
  const file = e.target.files[0];
  if (!file) return;
+
+ videoId = null;
+ $("download").style.display = "none";
+
  if (localURL) URL.revokeObjectURL(localURL);
  localURL = URL.createObjectURL(file);
  video.src = localURL;
@@ -141,15 +150,18 @@ $("videoFile").onchange = async e => {
 
  const form = new FormData();
  form.append("video", file);
+
  try {
   const res = await fetch("/upload", {method:"POST", body:form});
   const data = await res.json();
   if (!res.ok) throw Error(data.error || "Upload failed");
+
   videoId = data.id;
   $("videoInfo").textContent = "अपलोड पूरी: " + file.name;
   $("status").textContent = "अब Lyrics टाइमलाइन बनाएं।";
  } catch (err) {
   $("videoInfo").textContent = "Upload Error: " + err.message;
+  $("status").textContent = "वीडियो अपलोड नहीं हुई। दोबारा कोशिश करें।";
  }
 };
 
@@ -159,13 +171,16 @@ $("pauseBtn").onclick = () => video.pause();
 function renderLines() {
  const body = $("lyricsRows");
  body.innerHTML = "";
+
  if (!rows.length) {
   body.innerHTML = "<tr><td colspan='6'>पहले Lyrics लिखें।</td></tr>";
   $("lineInfo").textContent = "कोई Lyrics लाइन नहीं है।";
   return;
  }
+
  rows.forEach((r, i) => {
   const tr = document.createElement("tr");
+
   const number = document.createElement("td");
   number.textContent = i + 1;
   tr.appendChild(number);
@@ -202,61 +217,92 @@ function renderLines() {
   const del = document.createElement("button");
   del.className = "danger";
   del.textContent = "✕";
-  del.onclick = () => { rows.splice(i,1); renderLines(); };
+  del.onclick = () => {
+   rows.splice(i, 1);
+   renderLines();
+  };
   deleteCell.appendChild(del);
   tr.appendChild(deleteCell);
 
   body.appendChild(tr);
  });
+
  $("lineInfo").textContent = rows.length + " Lyrics लाइनें तैयार हैं।";
 }
 
 $("makeLines").onclick = () => {
  const text = $("lyrics").value.trim();
  if (!text) return alert("पहले Lyrics लिखें।");
- rows = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+
+ rows = text.split(/\r?\n/)
+  .map(s => s.trim())
+  .filter(Boolean)
   .map((text, i) => ({text, start:i*4, end:i*4+4}));
+
  renderLines();
 };
 
 $("addLine").onclick = () => {
- const start = rows.length ? Number(rows[rows.length-1].end) : 0;
- rows.push({text:"नई Lyrics लाइन", start, end:start+4});
+ const start = rows.length ? Number(rows[rows.length - 1].end) : 0;
+ rows.push({text:"नई Lyrics लाइन", start, end:start + 4});
  renderLines();
 };
 
 function loadVoices() {
- if ("speechSynthesis" in window) browserVoices = speechSynthesis.getVoices();
+ if ("speechSynthesis" in window) {
+  browserVoices = speechSynthesis.getVoices();
+ }
 }
+
 if ("speechSynthesis" in window) {
  loadVoices();
  speechSynthesis.onvoiceschanged = loadVoices;
 }
+
 function browserSpeak(text) {
- if (!("speechSynthesis" in window)) return alert("इस ब्राउज़र में आवाज़ उपलब्ध नहीं है।");
+ if (!("speechSynthesis" in window)) {
+  return alert("इस ब्राउज़र में आवाज़ उपलब्ध नहीं है।");
+ }
+
  speechSynthesis.cancel();
+
  const utterance = new SpeechSynthesisUtterance(text);
  utterance.lang = "hi-IN";
  utterance.rate = Number($("rate").value);
- const hindiVoice = browserVoices.find(v => v.lang.toLowerCase().startsWith("hi"));
+
+ const hindiVoice = browserVoices.find(
+  v => v.lang.toLowerCase().startsWith("hi")
+ );
+
  if (hindiVoice) utterance.voice = hindiVoice;
  speechSynthesis.speak(utterance);
 }
-$("testVoice").onclick = () => browserSpeak("नमस्ते, यह हिंदी आवाज़ का टेस्ट है।");
+
+$("testVoice").onclick = () => {
+ browserSpeak("नमस्ते, यह हिंदी आवाज़ का टेस्ट है।");
+};
 
 $("exportBtn").onclick = async () => {
  if (!videoId) return alert("पहले वीडियो अपलोड होने दें।");
  if (!rows.length) return alert("पहले Lyrics टाइमलाइन बनाएं।");
+
  for (const r of rows) {
-  if (!r.text.trim()) return alert("Lyrics की कोई लाइन खाली है।");
-  if (!Number.isFinite(Number(r.start)) || !Number.isFinite(Number(r.end)) ||
-      Number(r.start) < 0 || Number(r.end) <= Number(r.start)) {
+  if (!String(r.text).trim()) {
+   return alert("Lyrics की कोई लाइन खाली है।");
+  }
+
+  if (!Number.isFinite(Number(r.start)) ||
+      !Number.isFinite(Number(r.end)) ||
+      Number(r.start) < 0 ||
+      Number(r.end) <= Number(r.start)) {
    return alert("हर लाइन का End Time, Start Time से बड़ा होना चाहिए।");
   }
  }
+
  $("exportBtn").disabled = true;
  $("download").style.display = "none";
- $("status").textContent = "AI आवाज़ बन रही है और वीडियो तैयार हो रही है...";
+ $("status").textContent = "AI आवाज़ बन रही है और वीडियो तैयार हो रही है। इसमें समय लग सकता है...";
+
  try {
   const payload = {
    id: videoId,
@@ -267,13 +313,16 @@ $("exportBtn").onclick = async () => {
    burnCaptions: $("burnCaptions").checked,
    fontSize: Number($("fontSize").value)
   };
+
   const res = await fetch("/export", {
    method:"POST",
    headers:{"Content-Type":"application/json"},
    body:JSON.stringify(payload)
   });
+
   const data = await res.json();
   if (!res.ok) throw Error(data.error || "Export failed");
+
   $("status").textContent = "MP4 तैयार है! Download दबाएं।";
   $("download").href = data.url;
   $("download").style.display = "inline-block";
@@ -291,10 +340,14 @@ $("exportBtn").onclick = async () => {
 
 def run_command(command, cwd=None):
     result = subprocess.run(
-        command, cwd=cwd, capture_output=True, text=True
+        command,
+        cwd=cwd,
+        capture_output=True,
+        text=True
     )
     if result.returncode:
-        raise RuntimeError((result.stderr or result.stdout or "FFmpeg error")[-4000:])
+        message = result.stderr or result.stdout or "Command failed"
+        raise RuntimeError(message[-4000:])
     return result
 
 
@@ -309,9 +362,32 @@ def srt_time(seconds):
 async def make_voice(text, voice, rate, output_path):
     percent = round((rate - 1) * 100)
     rate_text = f"{percent:+d}%"
+
     await edge_tts.Communicate(
-        text, voice, rate=rate_text
+        text=text,
+        voice=voice,
+        rate=rate_text
     ).save(str(output_path))
+
+
+def video_has_audio(video_file):
+    """Check whether the uploaded video contains an audio stream."""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", "a:0",
+            "-show_entries", "stream=codec_type",
+            "-of", "csv=p=0",
+            str(video_file)
+        ],
+        capture_output=True,
+        text=True
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "वीडियो जाँच नहीं हो सकी। FFprobe/FFmpeg इंस्टॉल होने की जाँच करें।"
+        )
+    return bool(result.stdout.strip())
 
 
 @app.get("/")
@@ -319,144 +395,233 @@ def home():
     return render_template_string(HTML)
 
 
+@app.get("/health")
+def health():
+    return jsonify(status="ok", app="Prince Studio")
+
+
 @app.post("/upload")
 def upload():
     file = request.files.get("video")
+
     if not file or not file.filename:
         return jsonify(error="वीडियो फ़ाइल नहीं मिली।"), 400
 
     suffix = Path(file.filename).suffix.lower()
-    if suffix not in {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}:
-        return jsonify(error="इस वीडियो फ़ॉर्मेट को सपोर्ट नहीं किया गया।"), 400
+
+    if suffix not in ALLOWED_EXTENSIONS:
+        return jsonify(
+            error="यह फ़ॉर्मेट सपोर्ट नहीं है। MP4, MOV, MKV, AVI, WEBM या M4V चुनें।"
+        ), 400
 
     name = uuid.uuid4().hex + suffix
-    file.save(UPLOADS / name)
+
+    try:
+        file.save(UPLOADS / name)
+    except Exception as error:
+        return jsonify(error=f"वीडियो सेव नहीं हुई: {error}"), 500
+
     return jsonify(id=name)
 
 
 @app.post("/export")
 def export():
     data = request.get_json(silent=True) or {}
+
     video_id = Path(str(data.get("id", ""))).name
     video_file = UPLOADS / video_id
 
-    if not video_file.is_file():
+    if not video_id or not video_file.is_file():
         return jsonify(error="वीडियो नहीं मिली। दोबारा अपलोड करें।"), 400
 
     rows = data.get("rows", [])
+
     if not isinstance(rows, list) or not rows:
         return jsonify(error="पहले Lyrics टाइमलाइन बनाएं।"), 400
 
-    voice = str(data.get("voice", "hi-IN-SwaraNeural"))
-    if voice != "hi-IN-SwaraNeural":
-        voice = "hi-IN-SwaraNeural"
+    try:
+        rate = float(data.get("rate", 1))
+        rate = max(0.7, min(1.3, rate))
+        keep_original = data.get("keepOriginal", True) is True
+        captions = data.get("burnCaptions", True) is True
+        font_size = int(data.get("fontSize", 32))
+        font_size = max(18, min(54, font_size))
 
-    rate = max(0.7, min(1.3, float(data.get("rate", 1))))
-    keep_original = bool(data.get("keepOriginal", True))
-    captions = bool(data.get("burnCaptions", True))
-    font_size = max(18, min(54, int(data.get("fontSize", 32))))
+        clean = []
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+
+            text = str(row.get("text", "")).strip()
+            if not text:
+                continue
+
+            start = float(row.get("start", 0))
+            end = float(row.get("end", 0))
+
+            if start < 0 or end <= start:
+                raise ValueError(f"गलत टाइमिंग: {text}")
+
+            clean.append({
+                "text": text,
+                "start": start,
+                "end": end
+            })
+
+        if not clean:
+            raise ValueError("Lyrics खाली हैं।")
+
+        clean.sort(key=lambda item: item["start"])
+
+    except (ValueError, TypeError) as error:
+        return jsonify(error=f"इनपुट की जाँच करें: {error}"), 400
 
     job_id = uuid.uuid4().hex
     job = TEMP / job_id
     job.mkdir(parents=True, exist_ok=True)
 
-    try:
-        clean = []
-        for row in rows:
-            text = str(row.get("text", "")).strip()
-            start = float(row.get("start", 0))
-            end = float(row.get("end", 0))
-            if not text:
-                continue
-            if start < 0 or end <= start:
-                raise ValueError(f"गलत टाइमिंग: {text}")
-            clean.append({"text": text, "start": start, "end": end})
+    output_name = f"PrinceStudio_{job_id[:8]}.mp4"
+    output_file = EXPORTS / output_name
 
-        clean.sort(key=lambda item: item["start"])
-        if not clean:
-            raise ValueError("Lyrics खाली हैं।")
+    try:
+        has_audio = video_has_audio(video_file)
 
         audio_paths = []
+
         for i, item in enumerate(clean):
             audio = job / f"line_{i:03}.mp3"
-            asyncio.run(make_voice(item["text"], voice, rate, audio))
+
+            asyncio.run(
+                make_voice(
+                    item["text"],
+                    VOICE,
+                    rate,
+                    audio
+                )
+            )
+
+            if not audio.is_file() or audio.stat().st_size == 0:
+                raise RuntimeError("AI आवाज़ की फ़ाइल नहीं बन सकी।")
+
             audio_paths.append(audio)
 
-        with (job / "lyrics.srt").open("w", encoding="utf-8-sig") as srt:
-            for i, item in enumerate(clean, 1):
-                srt.write(
-                    f"{i}\n{srt_time(item['start'])} --> "
-                    f"{srt_time(item['end'])}\n{item['text']}\n\n"
-                )
-
-        output_name = f"LyricsStudio_{job_id[:8]}.mp4"
-        output_file = EXPORTS / output_name
+        if captions:
+            with (job / "lyrics.srt").open(
+                "w", encoding="utf-8-sig"
+            ) as srt:
+                for i, item in enumerate(clean, 1):
+                    srt.write(
+                        f"{i}\n"
+                        f"{srt_time(item['start'])} --> "
+                        f"{srt_time(item['end'])}\n"
+                        f"{item['text']}\n\n"
+                    )
 
         command = ["ffmpeg", "-y", "-i", str(video_file)]
+
         for audio in audio_paths:
-            command += ["-i", str(audio)]
+            command.extend(["-i", str(audio)])
 
         filters = []
         voice_labels = []
+
         for i, item in enumerate(clean):
             delay = round(item["start"] * 1000)
             label = f"v{i}"
-            filters.append(f"[{i+1}:a]adelay={delay}|{delay}[{label}]")
+
+            filters.append(
+                f"[{i + 1}:a]adelay={delay}|{delay}[{label}]"
+            )
             voice_labels.append(f"[{label}]")
 
         filters.append(
             "".join(voice_labels)
-            + f"amix=inputs={len(voice_labels)}:duration=longest:normalize=0,"
-              "apad[tts]"
+            + f"amix=inputs={len(voice_labels)}:"
+              "duration=longest:normalize=0,apad[tts]"
         )
 
-        if keep_original:
-            filters.append("[0:a]volume=0.25,apad[orig]")
-            filters.append("[orig][tts]amix=inputs=2:duration=longest:normalize=0[aout]")
+        if keep_original and has_audio:
+            filters.append("[0:a:0]volume=0.25,apad[orig]")
+            filters.append(
+                "[orig][tts]amix=inputs=2:"
+                "duration=longest:normalize=0[aout]"
+            )
         else:
             filters.append("[tts]anull[aout]")
 
-        command += [
+        command.extend([
             "-filter_complex", ";".join(filters),
-            "-map", "0:v:0", "-map", "[aout]"
-        ]
+            "-map", "0:v:0",
+            "-map", "[aout]"
+        ])
 
         if captions:
             style = (
-                f"FontName=Arial,FontSize={font_size},"
+                f"FontName=Noto Sans Devanagari,FontSize={font_size},"
                 "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
                 "BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=35"
             )
-            command += [
-                "-vf", f"subtitles=lyrics.srt:force_style='{style}'"
-            ]
 
-        command += [
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-            "-c:a", "aac", "-b:a", "192k", "-pix_fmt", "yuv420p",
-            "-movflags", "+faststart", "-shortest", str(output_file)
-        ]
+            subtitle_filter = (
+                "subtitles=lyrics.srt:"
+                f"force_style='{style}'"
+            )
+
+            command.extend(["-vf", subtitle_filter])
+
+        command.extend([
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "22",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            "-shortest",
+            str(output_file)
+        ])
 
         run_command(command, cwd=str(job))
-        return jsonify(url=f"/download/{output_name}")
+
+        if not output_file.is_file() or output_file.stat().st_size == 0:
+            raise RuntimeError("MP4 फ़ाइल तैयार नहीं हुई।")
+
+        return jsonify(
+            url=f"/download/{output_name}",
+            filename=output_name
+        )
 
     except Exception as error:
+        output_file.unlink(missing_ok=True)
         return jsonify(error=str(error)), 500
+
     finally:
         shutil.rmtree(job, ignore_errors=True)
 
 
 @app.get("/download/<path:name>")
 def download(name):
-    return send_from_directory(EXPORTS, name, as_attachment=True)
+    safe_name = Path(name).name
+    file_path = EXPORTS / safe_name
+
+    if not file_path.is_file():
+        return jsonify(error="यह MP4 फ़ाइल नहीं मिली। दोबारा Export करें।"), 404
+
+    return send_from_directory(
+        EXPORTS,
+        safe_name,
+        as_attachment=True
+    )
 
 
 if __name__ == "__main__":
-    print("Lyrics Studio PRO chal raha hai.")
-    print("Browser mein kholen: http://127.0.0.1:5000")
+    print("Prince Studio chal raha hai.")
+    print("Browser mein kholen: http://127.0.0.1:10000")
     print("Band karne ke liye CMD mein Ctrl+C dabayen.")
+
     app.run(
-    host="0.0.0.0",
-    port=int(os.environ.get("PORT", 10000)),
-    debug=False
-)
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 10000)),
+        debug=False
+    )
